@@ -7,7 +7,12 @@ import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { z } from 'zod';
 import { starterAgent } from '../agents/starterAgent';
 import { streamJSONEvent, streamProgressUpdate } from '../../utils/streamUtils';
-import { ActionSchema, ChatAgentResponseSchema } from './chatWorkflowTypes';
+import {
+  ActionSchema,
+  ChatAgentResponseSchema,
+  UserApprovalSuspendSchema,
+  UserApprovalResumeSchema,
+} from './chatWorkflowTypes';
 
 export const ChatInputSchema = z.object({
   prompt: z.string(),
@@ -15,6 +20,7 @@ export const ChatInputSchema = z.object({
   maxTokens: z.number().optional(),
   systemPrompt: z.string().optional(),
   streamController: z.any().optional(), // For streaming
+  additionalContext: z.any().optional(), // For additional context including suspend data
 });
 
 export const ChatOutputSchema = z.object({
@@ -76,17 +82,62 @@ const buildAgentContext = createStep({
   },
 });
 
-// 3. callAgent – invoke chatAgent
+// 3. userApproval – suspend workflow for user approval if needed
+const userApprovalStep = createStep({
+  id: 'userApproval',
+  description: 'Wait for user approval before generating response',
+  inputSchema: buildAgentContext.outputSchema,
+  outputSchema: buildAgentContext.outputSchema.extend({
+    approved: z.boolean(),
+    feedback: z.string().optional(),
+  }),
+  suspendSchema: UserApprovalSuspendSchema,
+  resumeSchema: UserApprovalResumeSchema,
+  execute: async ({ inputData, resumeData, suspend }) => {
+    const { approved, feedback } = resumeData ?? {};
+
+    // Check if this is a sensitive request that needs approval
+    const needsApproval = inputData.messages.some(
+      (msg) =>
+        msg.content.toLowerCase().includes('sensitive') ||
+        msg.content.toLowerCase().includes('approve'),
+    );
+
+    if (needsApproval && !approved) {
+      await suspend({
+        pendingResponse: `Request pending approval: ${inputData.messages[0].content}`,
+        requiresApproval: true,
+      });
+      return { ...inputData, approved: false };
+    }
+
+    return {
+      ...inputData,
+      approved: true,
+      feedback: feedback || 'Auto-approved',
+    };
+  },
+});
+
+// 4. callAgent – invoke chatAgent
 const callAgent = createStep({
   id: 'callAgent',
   description: 'Invoke the chat agent with options',
-  inputSchema: buildAgentContext.outputSchema,
+  inputSchema: userApprovalStep.outputSchema,
   outputSchema: ChatOutputSchema,
   execute: async ({ inputData }) => {
     const { messages, temperature, maxTokens, streamController, systemPrompt } = inputData;
 
-    if (streamController) {
-      streamProgressUpdate(streamController, 'Generating response...', 'in_progress');
+    // Check if streamController is valid before using it
+    const isValidStreamController =
+      streamController && typeof streamController.enqueue === 'function';
+
+    if (isValidStreamController) {
+      try {
+        streamProgressUpdate(streamController, 'Generating response...', 'in_progress');
+      } catch (error) {
+        console.warn('Stream controller is no longer valid:', error);
+      }
     }
 
     const response = await starterAgent.generate(messages, {
@@ -108,12 +159,21 @@ const callAgent = createStep({
     };
 
     console.log('Chat workflow result', result);
-    if (streamController) {
-      streamJSONEvent(streamController, result);
+
+    if (isValidStreamController) {
+      try {
+        streamJSONEvent(streamController, result);
+      } catch (error) {
+        console.warn('Failed to stream result, stream controller is no longer valid:', error);
+      }
     }
 
-    if (streamController) {
-      streamProgressUpdate(streamController, 'Response generated', 'complete');
+    if (isValidStreamController) {
+      try {
+        streamProgressUpdate(streamController, 'Response generated', 'complete');
+      } catch (error) {
+        console.warn('Failed to stream completion, stream controller is no longer valid:', error);
+      }
     }
 
     return result;
@@ -128,5 +188,6 @@ export const chatWorkflow = createWorkflow({
 })
   .then(fetchContext)
   .then(buildAgentContext)
+  .then(userApprovalStep)
   .then(callAgent)
   .commit();
