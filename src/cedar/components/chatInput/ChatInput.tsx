@@ -1,7 +1,7 @@
-import { useVoice, VoiceIndicator, cn } from 'cedar-os';
+import { useVoice, cn, useCedarStore, HumanInTheLoopMessage } from 'cedar-os';
 
 import { CedarEditorContent as EditorContent } from 'cedar-os';
-import { Code, Image, Mic, SendHorizontal } from 'lucide-react';
+import { Code, Image, Mic, SendHorizonal } from 'lucide-react';
 import { motion } from 'motion/react';
 import React, { useCallback, useEffect } from 'react';
 
@@ -9,6 +9,9 @@ import './ChatInput.css';
 import { ContextBadgeRow } from '@/cedar/components/chatInput/ContextBadgeRow';
 import { useCedarEditor } from 'cedar-os';
 import Container3DButton from '@/cedar/components/containers/Container3DButton';
+import { VoiceIndicator } from '@/cedar/components/voice/VoiceIndicator';
+import { KeyboardShortcut } from '@/cedar/components/ui/KeyboardShortcut';
+import { HumanInTheLoopIndicator } from '@/cedar/components/chatInput/HumanInTheLoopIndicator';
 
 // ChatContainer component with position options
 export type ChatContainerPosition = 'bottom-center' | 'embedded' | 'custom';
@@ -22,14 +25,29 @@ export const ChatInput: React.FC<{
   className?: string; // Additional classes for the container
   stream?: boolean; // Whether to use streaming for responses
 }> = ({ handleFocus, handleBlur, isInputFocused, className = '', stream = true }) => {
+  const [isFocused, setIsFocused] = React.useState(false);
+
   const { editor, isEditorEmpty, handleSubmit } = useCedarEditor({
-    onFocus: handleFocus,
-    onBlur: handleBlur,
+    onFocus: () => {
+      setIsFocused(true);
+      handleFocus?.();
+    },
+    onBlur: () => {
+      setIsFocused(false);
+      handleBlur?.();
+    },
     stream,
   });
 
   // Initialize voice functionality
   const voice = useVoice();
+
+  // Get latest message to check for human-in-the-loop state
+  const messages = useCedarStore((state) => state.messages);
+  const latestMessage = messages[messages.length - 1];
+  const isHumanInTheLoopSuspended =
+    latestMessage?.type === 'humanInTheLoop' &&
+    (latestMessage as HumanInTheLoopMessage).state === 'suspended';
 
   // Handle voice toggle
   const handleVoiceToggle = useCallback(async () => {
@@ -63,7 +81,7 @@ export const ChatInput: React.FC<{
     if (voice.voicePermissionStatus === 'denied') {
       return 'p-1 text-gray-400 cursor-not-allowed';
     }
-    return 'p-1 text-gray-600 hover:text-black cursor-pointer';
+    return 'p-1 text-gray-600 dark:text-gray-200 hover:text-black dark:hover:text-white cursor-pointer';
   };
 
   // Focus the editor when isInputFocused changes to allow for controlled focusing
@@ -73,14 +91,19 @@ export const ChatInput: React.FC<{
     }
   }, [isInputFocused, editor]);
 
-  // Handle tab key to focus the editor
+  // Handle tab key to focus the editor and escape to unfocus
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Tab') {
         e.preventDefault();
         if (editor) {
           editor.commands.focus();
-          handleFocus?.();
+          setIsFocused(true);
+        }
+      } else if (e.key === 'Escape') {
+        if (isFocused && editor) {
+          editor.commands.blur();
+          setIsFocused(false);
         }
       }
     };
@@ -92,7 +115,7 @@ export const ChatInput: React.FC<{
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [editor, handleFocus]);
+  }, [editor, isFocused]);
 
   // Handle global keyboard shortcuts
   useEffect(() => {
@@ -125,7 +148,7 @@ export const ChatInput: React.FC<{
   }, [handleVoiceToggle]);
 
   return (
-    <div className={cn('bg-gray-800/10 dark:bg-gray-400/80 rounded-lg p-3 text-sm', className)}>
+    <div className={cn('bg-gray-800/10 dark:bg-gray-600/80 rounded-lg p-3 text-sm', className)}>
       {/* Input context row showing selected context nodes */}
       <ContextBadgeRow editor={editor} />
 
@@ -142,8 +165,18 @@ export const ChatInput: React.FC<{
               }}
             />
           </div>
+        ) : isHumanInTheLoopSuspended ? (
+          <div className="py-2 items-center justify-center w-full">
+            <HumanInTheLoopIndicator state={(latestMessage as HumanInTheLoopMessage).state} />
+          </div>
         ) : (
-          <div className="flex items-center">
+          <div className="flex items-center gap-2">
+            {!isFocused && (
+              <KeyboardShortcut
+                shortcut="⇥"
+                className="text-muted-foreground border-muted-foreground/30 flex-shrink-0"
+              />
+            )}
             <motion.div
               layoutId="chatInput"
               className="flex-1 justify-center py-3"
@@ -151,7 +184,7 @@ export const ChatInput: React.FC<{
             >
               <EditorContent
                 editor={editor}
-                className="prose prose-sm max-w-none focus:outline-none outline-none focus:ring-0 ring-0 [&_*]:focus:outline-none [&_*]:outline-none [&_*]:focus:ring-0 [&_*]:ring-0 placeholder-gray-500 dark:placeholder-gray-400 [&_.ProseMirror]:p-0 [&_.ProseMirror]:outline-none"
+                className="prose prose-sm max-w-none focus:outline-none outline-none focus:ring-0 ring-0 [&_*]:focus:outline-none [&_*]:outline-none [&_*]:focus:ring-0 [&_*]:ring-0 placeholder-gray-500 dark:placeholder-gray-400 [&_.ProseMirror]:p-0 [&_.ProseMirror]:outline-none [&_.ProseMirror]:break-words [&_.ProseMirror]:overflow-wrap-anywhere [&_.ProseMirror]:word-break-break-word"
               />
             </motion.div>
           </div>
@@ -183,10 +216,16 @@ export const ChatInput: React.FC<{
           >
             <Mic className="w-4 h-4" />
           </button>
-          <button type="button" className="p-1 text-gray-600 hover:text-black cursor-pointer">
+          <button
+            type="button"
+            className="p-1 text-gray-600 dark:text-gray-200 hover:text-black dark:hover:text-white cursor-pointer"
+          >
             <Image className="w-4 h-4" />
           </button>
-          <button type="button" className="p-1 text-gray-600 hover:text-black cursor-pointer">
+          <button
+            type="button"
+            className="p-1 text-gray-600 dark:text-gray-200 hover:text-black dark:hover:text-white cursor-pointer"
+          >
             <Code className="w-4 h-4" />
           </button>
         </div>
@@ -209,7 +248,7 @@ export const ChatInput: React.FC<{
             animate={{ rotate: isEditorEmpty ? 0 : -90 }}
             transition={{ type: 'spring', stiffness: 300, damping: 20 }}
           >
-            <SendHorizontal className="w-4 h-4" />
+            <SendHorizonal className="w-4 h-4" />
           </motion.div>
         </Container3DButton>
       </div>

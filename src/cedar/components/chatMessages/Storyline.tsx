@@ -107,7 +107,6 @@ const Storyline: React.FC<StorylineProps> = ({ message }) => {
       y: 0,
       transition: {
         duration: 0.8, // Increased from 0.4 to 0.8
-        ease: 'easeOut',
       },
     },
   };
@@ -122,7 +121,6 @@ const Storyline: React.FC<StorylineProps> = ({ message }) => {
       scale: 1,
       transition: {
         duration: 0.6, // Increased from 0.3 to 0.6
-        ease: 'backOut',
       },
     },
   };
@@ -138,7 +136,6 @@ const Storyline: React.FC<StorylineProps> = ({ message }) => {
       transition: {
         duration: 0.8, // Increased from 0.4 to 0.8
         delay: 0.3, // Increased from 0.15 to 0.3
-        ease: 'easeOut',
       },
     },
   };
