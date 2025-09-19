@@ -34,6 +34,6 @@ You will respond in a JSON format with the following fields:
 </response_format>
   `,
   model: openai('gpt-4o-mini'),
-  // TODO: Add any tools your agent needs by passing them in the tools array
-  // tools: [tool1, tool2, ...],
+  // TODO: Add any tools your agent needs by passing them in the tools record
+  // tools: {tool1, tool2, ...},
 });
